@@ -43,7 +43,7 @@ Output Functionality:
     All GPIO pins (D1-D7) can be used as outputs and can be configured to flash or output a specific value.
 
 
-Code using U8g2
+Example Code using U8g2
 
 #include <U8g2lib.h>
 #define OLED_RESET     U8X8_PIN_NONE // Reset pin
@@ -75,3 +75,22 @@ void loop() {
   delay(1000);
 }
 
+Full Pinout 
+
+Pin Number	ESP8266 GPIO	Pin Name (HW-364A)	Functionality				            Notes
+1		    GPIO16		    WAKE			    Wake from deep sleep		        	Can be used as a GPIO input/output
+2		    GPIO1		    TXD0		    	UART Transmit	Default 		        TX pin for UART0
+3		    GPIO3		    RXD0		    	UART Receive	Default 		        RX pin for UART0
+4		    GPIO5		    D1			        General-purpose I/O			            Can be used as input/output
+5		    GPIO4		    D2			        General-purpose I/O			            Can be used as input/output
+6		    GPIO0		    D3			        General-purpose I/O			            Special boot function (flash mode)
+7		    GPIO2		    D4			        General-purpose I/O			            Special boot function (flash mode)
+8		    GPIO15		    D8			        General-purpose I/O			            Active low (must be pulled high for normal boot)
+9		    GPIO6		    S2			        SPI Flash (not available for GPIO use)	Typically connected to internal SPI flash memory
+10		    GPIO7		    S0			        SPI Flash (not available for GPIO use)	Typically connected to internal SPI flash memory
+11		    GPIO8		    S1			        SPI Flash (not available for GPIO use)	Typically connected to internal SPI flash memory
+12		    GPIO9		    S3			        SPI Flash (not available for GPIO use)	Typically connected to internal SPI flash memory
+13		    GPIO10		    SC			        SPI Flash (not available for GPIO use)	Typically connected to internal SPI flash memory
+14		    GPIO12		    D5			        I2C SCL (Clock)				            Can be used as input/output
+15		    GPIO14		    D6			        I2C SDA (Data)				            Can be used as input/output
+16		    GPIO13		    D7			        General-purpose I/O			            Can be used as input/output
