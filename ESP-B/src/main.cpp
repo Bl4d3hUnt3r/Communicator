@@ -165,6 +165,8 @@ void renderMenu() {
 void OnDataRecv(uint8_t* mac, uint8_t* incomingData, uint8_t len) {
   MessageData incomingMessageData;
 
+  Serial.println("OnDataRecv called");
+
   if (len != sizeof(MessageData)) {
     Serial.println("Invalid message length");
     return;
@@ -172,23 +174,39 @@ void OnDataRecv(uint8_t* mac, uint8_t* incomingData, uint8_t len) {
 
   memcpy(&incomingMessageData, incomingData, len);
 
+  Serial.print("Received message: wakeUp = ");
+  Serial.print(incomingMessageData.wakeUp);
+  Serial.print(", state = ");
+  Serial.println(incomingMessageData.state);
+
   if (incomingMessageData.wakeUp) {
+    Serial.println("WakeUp flag is true");
+
     userIsInteracting = false; // Reset interaction flag
 
-    flashLEDsForCallNotification(); // Flash LEDs until user interacts
+    //flashLEDsForCallNotification(); // Flash LEDs until user interacts
 
-    // Move the button checking and state updating code here
-    while (!userIsInteracting) {
+    unsigned long startTime = millis();
+    while (!userIsInteracting && millis() - startTime < 30000) {
+      Serial.println("Inside while loop");
+
       // Read the state of the state button
       stateButtonCurrentState = digitalRead(STATE_BUTTON_PIN);
 
+      Serial.print("State button state: ");
+      Serial.println(stateButtonCurrentState);
+
       // Debounce the state button
       if (debounceStateButton()) {
+        Serial.println("State button debounced");
+
         userIsInteracting = true; // Set interaction flag
         menuActive = true;
 
         // Update the state when the state button is pressed
         if (menuActive) {
+          Serial.println("Menu is active");
+
           if (currentMenuItem == 0) {
             currentMenuItem = 1; // Initialize to 1 on first press
           } else if (currentMenuItem == 1) {
@@ -198,6 +216,9 @@ void OnDataRecv(uint8_t* mac, uint8_t* incomingData, uint8_t len) {
           } else if (currentMenuItem == 3) {
             currentMenuItem = 1;
           }
+
+          Serial.print("Current menu item: ");
+          Serial.println(currentMenuItem);
 
           // Update the currentState variable immediately
           switch (currentMenuItem) {
@@ -214,14 +235,22 @@ void OnDataRecv(uint8_t* mac, uint8_t* incomingData, uint8_t len) {
               currentState = 0;
               break;
           }
+
+          Serial.print("Current state: ");
+          Serial.println(currentState);
         }
       }
 
       // Read the state of the send button
       sendButtonCurrentState = digitalRead(SEND_BUTTON_PIN);
 
+      Serial.print("Send button state: ");
+      Serial.println(sendButtonCurrentState);
+
       // Debounce the send button
       if (debounceSendButton()) {
+        Serial.println("Send button debounced");
+
         // Send the current state when the send button is pressed
         handleSendPress();
         menuActive = false; // Reset menuActive to false on send button press
@@ -231,6 +260,10 @@ void OnDataRecv(uint8_t* mac, uint8_t* incomingData, uint8_t len) {
       renderMenu();
 
       delay(100); // Add a delay to avoid flooding the serial output
+    }
+
+    if (!userIsInteracting) {
+      Serial.println("Timeout: user did not interact within 30 seconds");
     }
   }
 }
@@ -263,6 +296,7 @@ void setup() {
   esp_now_set_self_role(ESP_NOW_ROLE_SLAVE);
 
   esp_now_register_recv_cb(OnDataRecv);
+    Serial.println("Setup complete");
 
 }
 
