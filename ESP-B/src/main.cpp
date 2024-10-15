@@ -11,17 +11,8 @@
 #define GREEN_LED_PIN 5              // GPIO 5 (D1)
 #define RED_LED_PIN 4                // GPIO 4 (D2)
 
-// Debouncing variables
-
-const unsigned long DEBOUNCE_DELAY = 50; // 50ms debounce delay
-int stateButtonCurrentState ;
-unsigned long lastStateDebounceTime = 0;
-int sendButtonCurrentState;
-unsigned long lastSendDebounceTime = 0;
-
 // Define struct for sending complex data
 typedef struct {
-  bool wakeUp;
   int state;
 } MessageData;
 
@@ -31,19 +22,9 @@ MessageData messageData;
 // OLED display
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, OLED_SCL, OLED_SDA);
 
-// button variables
-int stateButtonState = HIGH;         // Initial state of state button
-int stateButtonLastState = HIGH;     // Last state of state button
-unsigned long stateButtonLastDebounceTime = 0;  // Last debounce time of state button
-bool userIsInteracting = false;
-int sendButtonState = HIGH;         // Initial state of send button
-int sendButtonLastState = HIGH;     // Last state of send button
-unsigned long sendButtonLastDebounceTime = 0;  // Last debounce time of send button
-
 // Menu variables
 int currentState = 0;               // Current state of the menu
 int currentMenuItem = 0;            // Current menu item (initialize to 1)
-bool menuActive = false;
 
 // Menu items
 const char* menuItems[] = {
@@ -56,233 +37,145 @@ const char* menuItems[] = {
 const int numMenuItems = sizeof(menuItems) / sizeof(menuItems[0]);
 
 // ESPNow variables
-uint8_t broadcastAddress[] = {0xC4, 0xD8, 0xD5, 0x2B, 0x7C, 0x15};
+uint8_t broadcastAddress[] = {0x98, 0xF4, 0xAB, 0xBC, 0xCE, 0x25};
 
-// Function to debounce the state button
+unsigned long lastFlashTime = 0;
+const long flashInterval = 500; // 500ms interval for flashing
 
-bool debounceButton(int buttonPin, int& lastButtonState, unsigned long& lastDebounceTime) {
-  int buttonState = digitalRead(buttonPin);
+void flashLEDs() {
   unsigned long currentTime = millis();
-
-  Serial.print("Button state: ");
-  Serial.println(buttonState);
-
-  if (buttonState != lastButtonState) {
-    lastDebounceTime = currentTime;
-    lastButtonState = buttonState;
-    Serial.print("Last button state updated: ");
-    Serial.println(lastButtonState);
+  if (currentTime - lastFlashTime >= flashInterval) {
+    lastFlashTime = currentTime;
+    digitalWrite(RED_LED_PIN, !digitalRead(RED_LED_PIN));
+    digitalWrite(GREEN_LED_PIN, !digitalRead(GREEN_LED_PIN));
   }
-
-  if (currentTime - lastDebounceTime > DEBOUNCE_DELAY) {
-    if (buttonState != lastButtonState) {
-      lastButtonState = buttonState;
-      Serial.println("Button press debounced");
-      return true;
-    }
-  }
-
-  return false;
 }
-
-bool debounceStateButton() {
-  return debounceButton(STATE_BUTTON_PIN, stateButtonLastState, stateButtonLastDebounceTime);
-}
-
-bool debounceSendButton() {
-  return debounceButton(SEND_BUTTON_PIN, sendButtonLastState, sendButtonLastDebounceTime);
-}
-
-void flashLEDsForCallNotification() {
-
-  unsigned long lastFlashTime = 0;
-
-  while (!userIsInteracting) {
-
-    unsigned long currentTime = millis();
-
-    if (currentTime - lastFlashTime >= 500) {
-
-      lastFlashTime = currentTime;
-
-      digitalWrite(RED_LED_PIN, HIGH);
-
-      digitalWrite(GREEN_LED_PIN, LOW);
-
-      delay(500);
-
-      digitalWrite(RED_LED_PIN, LOW);
-
-      digitalWrite(GREEN_LED_PIN, HIGH);
-
-    }
-
-  }
-
-}
-
-void handleSendPress() {
-  // Send the current state using ESPNow
-  messageData.wakeUp = true;
-  messageData.state = currentState;
-
-  // Debugging: Output the data to be sent over ESPNow to the serial monitor
-  Serial.print("Sending ESPNow message: ");
-  Serial.print("WakeUp: ");
-  Serial.print(messageData.wakeUp);
-  Serial.print(", State: ");
-  Serial.println(messageData.state);
-
-  esp_now_send(broadcastAddress, (uint8_t*) &messageData, sizeof(messageData));
-}
-
 void renderMenu() {
-
   u8g2.clearBuffer();
 
   u8g2.setFont(u8g2_font_ncenB08_tr);
 
   u8g2.setCursor(40, 16);
-
-  u8g2.print(menuItems[0 ]);
+  u8g2.print(menuItems[0]);
 
   u8g2.setCursor(40, 32);
-
   u8g2.print(menuItems[1]);
 
   u8g2.setCursor(40, 48);
-
   u8g2.print(menuItems[2]);
 
   u8g2.setCursor(40, 64);
-
   u8g2.print(menuItems[3]);
 
   u8g2.sendBuffer();
-
 }
 
-void OnDataRecv(uint8_t* mac, uint8_t* incomingData, uint8_t len) {
-  MessageData incomingMessageData;
+void handleSendPress() {
+  if (currentState == 5) {
+    currentState = currentMenuItem + 1;  // Assuming menuItems are 0-indexed
+    messageData.state = currentState;
+    esp_now_send(broadcastAddress, (uint8_t*) &messageData, sizeof(messageData));
+    Serial.print("Sent state to A: ");
+    Serial.println(currentState);
+  }
+}
 
-  Serial.println("OnDataRecv called");
+void handleStatePress() {
+  if (currentState == 4) {
+    currentState = 5;
+    messageData.state = currentState;
+    esp_now_send(broadcastAddress, (uint8_t*) &messageData, sizeof(messageData));
+    Serial.println("Transitioned to state 5, sent to device A");
+  } else if (currentState == 5) {
+    currentMenuItem = (currentMenuItem + 1) % numMenuItems;
+  }
+  renderMenu();
+}
+
+void updateLEDs() {
+  switch (currentState) {
+    case 0:  // Idle
+      digitalWrite(RED_LED_PIN, LOW);
+      digitalWrite(GREEN_LED_PIN, LOW);
+      break;
+    case 1:  // Waiting
+      digitalWrite(RED_LED_PIN, LOW);
+      digitalWrite(GREEN_LED_PIN, HIGH);
+      break;
+    case 2:  // Active
+      digitalWrite(RED_LED_PIN, HIGH);
+      digitalWrite(GREEN_LED_PIN, LOW);
+      break;
+    case 4:  // Call notification
+      flashLEDs();
+      break;
+    case 5:  // User is interacting
+    default: // For any other states
+      digitalWrite(RED_LED_PIN, LOW);
+      digitalWrite(GREEN_LED_PIN, LOW);
+      break;
+  }
+}
+
+
+
+void OnDataRecv(uint8_t* mac, uint8_t* incomingData, uint8_t len) {
 
   if (len != sizeof(MessageData)) {
+
     Serial.println("Invalid message length");
+
     return;
+
   }
+
+
+  MessageData incomingMessageData;
 
   memcpy(&incomingMessageData, incomingData, len);
 
-  Serial.print("Received message: wakeUp = ");
-  Serial.print(incomingMessageData.wakeUp);
-  Serial.print(", state = ");
+
+  Serial.print("Received message: state = ");
+
   Serial.println(incomingMessageData.state);
 
-  if (incomingMessageData.wakeUp) {
-    Serial.println("WakeUp flag is true");
 
-    userIsInteracting = false; // Reset interaction flag
+  // Handle incoming message
 
-    //flashLEDsForCallNotification(); // Flash LEDs until user interacts
+  if (incomingMessageData.state == 4) {  // Call state
 
-    unsigned long startTime = millis();
-    while (!userIsInteracting && millis() - startTime < 30000) {
-      Serial.println("Inside while loop");
+    if (currentState == 0) {  // Only react if we're in idle state
 
-      // Read the state of the state button
-      stateButtonCurrentState = digitalRead(STATE_BUTTON_PIN);
+      currentState = 4;
 
-      Serial.print("State button state: ");
-      Serial.println(stateButtonCurrentState);
+      Serial.println("Call received. LEDs flashing.");
 
-      // Debounce the state button
-      if (debounceStateButton()) {
-        Serial.println("State button debounced");
-
-        userIsInteracting = true; // Set interaction flag
-        menuActive = true;
-
-        // Update the state when the state button is pressed
-        if (menuActive) {
-          Serial.println("Menu is active");
-
-          if (currentMenuItem == 0) {
-            currentMenuItem = 1; // Initialize to 1 on first press
-          } else if (currentMenuItem == 1) {
-            currentMenuItem = 2;
-          } else if (currentMenuItem == 2) {
-            currentMenuItem = 3;
-          } else if (currentMenuItem == 3) {
-            currentMenuItem = 1;
-          }
-
-          Serial.print("Current menu item: ");
-          Serial.println(currentMenuItem);
-
-          // Update the currentState variable immediately
-          switch (currentMenuItem) {
-            case 1:
-              currentState = 1;
-              break;
-            case 2:
-              currentState = 2;
-              break;
-            case 3:
-              currentState = 3;
-              break;
-            default:
-              currentState = 0;
-              break;
-          }
-
-          Serial.print("Current state: ");
-          Serial.println(currentState);
-        }
-      }
-
-      // Read the state of the send button
-      sendButtonCurrentState = digitalRead(SEND_BUTTON_PIN);
-
-      Serial.print("Send button state: ");
-      Serial.println(sendButtonCurrentState);
-
-      // Debounce the send button
-      if (debounceSendButton()) {
-        Serial.println("Send button debounced");
-
-        // Send the current state when the send button is pressed
-        handleSendPress();
-        menuActive = false; // Reset menuActive to false on send button press
-      }
-
-      // Update the OLED display
-      renderMenu();
-
-      delay(100); // Add a delay to avoid flooding the serial output
     }
 
-    if (!userIsInteracting) {
-      Serial.println("Timeout: user did not interact within 30 seconds");
-    }
+  } else {
+
+    Serial.println("Unexpected state received");
+
   }
+
+
+  // Update OLED display based on current state
+
+  renderMenu();
+
+
+  // Update LEDs based on the new state
+
+  updateLEDs();
+
 }
 
 void setup() {
+  Serial.begin(74880); // Initialize serial monitor at 74880 baud rate
 
- Serial.begin(74880); // Initialize serial monitor at 115200 baud rate
-
-  while (!Serial) {
-
-    ; // Wait for serial monitor to be available
-
-  }
   pinMode(STATE_BUTTON_PIN, INPUT);
-
   pinMode(SEND_BUTTON_PIN, INPUT);
-
   pinMode(GREEN_LED_PIN, OUTPUT);
-
   pinMode(RED_LED_PIN, OUTPUT);
 
   u8g2.begin();
@@ -294,17 +187,35 @@ void setup() {
     return;
   }
   esp_now_set_self_role(ESP_NOW_ROLE_SLAVE);
-
   esp_now_register_recv_cb(OnDataRecv);
-    Serial.println("Setup complete");
 
+  Serial.println("Setup complete");
 }
 
 void loop() {
+  // Read the state of the buttons
+  int stateButtonState = digitalRead(STATE_BUTTON_PIN);
+  int sendButtonState = digitalRead(SEND_BUTTON_PIN);
 
-  // Check for incoming messages
-  // No need to do anything here, the onReceive function will handle incoming messages
-  delay(100); // Add a delay to avoid flooding the serial output
+  // Handle button presses
+  if (stateButtonState == LOW) {
+    if (currentState == 4) {
+      currentState = 5;  // Transition from "call" state to "interacting" state
+    }
+    handleStatePress();
+  }
+  if (sendButtonState == LOW) {
+    if (currentState == 4) {
+      currentState = 5;  // Transition from "call" state to "interacting" state
+    }
+    handleSendPress();
+  }
 
+  // Update LEDs based on current state
+  updateLEDs();
+
+  // Render menu
+  renderMenu();
+
+  delay(100); // Small delay to prevent bouncing
 }
-
