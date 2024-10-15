@@ -14,6 +14,16 @@
 // Define the state
 uint8_t state;
 
+
+
+//Power-saving
+const unsigned long DISPLAY_TIMEOUT = 30000; // 30 seconds
+
+unsigned long lastActivityTime = 0;
+
+bool displayActive = true;
+
+
 bool ledState = false;  
 
 // OLED display
@@ -39,6 +49,90 @@ uint8_t broadcastAddress[] = {0x98, 0xF4, 0xAB, 0xBC, 0xCE, 0x25};
 unsigned long lastFlashTime = 0;
 const long flashInterval = 500; // 500ms interval for flashing
 
+
+void renderMenu() {
+
+  u8g2.clearBuffer();
+
+
+  // Headline
+
+  u8g2.setFont(u8g2_font_ncenB08_tr);
+
+  u8g2.setCursor(40, 16);
+
+  u8g2.print(menuItems[0]);
+
+
+  // Menu items
+
+  for (int i = 1; i < numMenuItems; i++) {
+
+    u8g2.setCursor(15, 25 + (i-1) * 15);
+
+    u8g2.print(menuItems[i]);
+
+  }
+
+
+  // Print the arrow
+
+if (currentMenuItem > 0) {
+
+    u8g2.setCursor(0, 25 + (currentMenuItem-1) * 15);
+
+    u8g2.print(" > ");
+
+  }
+
+
+  u8g2.sendBuffer();
+
+}
+
+
+void turnOnDisplay() {
+
+  displayActive = true;
+
+  u8g2.setPowerSave(0); // Turn on OLED display
+
+  renderMenu();
+
+}
+
+
+void wakeUpSystem() {
+
+  lastActivityTime = millis(); // Reset activity timer
+
+  if (!displayActive) {
+
+    turnOnDisplay();
+
+  }
+
+  system_update_cpu_freq(160); // Set to full speed (160 MHz)
+
+}
+
+
+void turnOffDisplay() {
+
+  displayActive = false;
+
+  u8g2.setPowerSave(1); // Turn off OLED display
+
+  digitalWrite(GREEN_LED_PIN, LOW);
+
+  digitalWrite(RED_LED_PIN, LOW);
+
+}
+
+
+
+
+
 void flashLEDs() {
 
   unsigned long currentTime = millis();
@@ -58,30 +152,16 @@ void flashLEDs() {
 }
 
 
-void renderMenu() {
-  u8g2.clearBuffer();
 
-  u8g2.setFont(u8g2_font_ncenB08_tr);
-  u8g2.setCursor(40, 16);
-  u8g2.print(menuItems[0]);
 
-  u8g2.setCursor(40, 32);
-  u8g2.print(menuItems[1]);
-
-  u8g2.setCursor(40, 48);
-  u8g2.print(menuItems[2]);
-
-  u8g2.setCursor(40, 64);
-  u8g2.print(menuItems[3]);
-
-  u8g2.sendBuffer();
-}
 
 void handleSendPress() {
 
   if (currentState == 5) {
 
-    currentState = currentMenuItem + 1;  // Assuming menuItems are 0-indexed
+     wakeUpSystem();
+
+    currentState = currentMenuItem; // Directly use currentMenuItem as the state
 
     uint8_t stateToSend = (uint8_t)currentState;
 
@@ -91,20 +171,38 @@ void handleSendPress() {
 
     Serial.println(currentState);
 
+    // Optionally, transition out of the menu state
+
+    // currentState = 4;  // or any other appropriate state
+
   }
 
 }
 
 void handleStatePress() {
+
   if (currentState == 4) {
+
+     wakeUpSystem();
+
     currentState = 5;
+
     uint8_t stateToSend = (uint8_t)currentState;
+
     esp_now_send(broadcastAddress, &stateToSend, sizeof(uint8_t));
+
     Serial.println("Transitioned to state 5, sent to device A");
+
+    renderMenu();
+
   } else if (currentState == 5) {
-    currentMenuItem = (currentMenuItem + 1) % numMenuItems;
+
+    currentMenuItem = (currentMenuItem % (numMenuItems - 1)) + 1; // Cycle through 1 to 3
+
+    renderMenu();
+
   }
-  renderMenu();
+
 }
 
 void updateLEDs() {
@@ -141,6 +239,8 @@ void OnDataRecv(uint8_t* mac, uint8_t* incomingData, uint8_t len) {
   }
 
   uint8_t receivedState = incomingData[0];
+
+   wakeUpSystem();
 
   Serial.print("Received message: state = ");
   Serial.println(receivedState);
@@ -181,33 +281,81 @@ void setup() {
   esp_now_set_self_role(ESP_NOW_ROLE_SLAVE);
   esp_now_register_recv_cb(OnDataRecv);
 
+   system_update_cpu_freq(80); // Set to low speed initially
+
+  lastActivityTime = millis();
+
+
   Serial.println("Setup complete");
 }
 
 void loop() {
+
+  // Check for display timeout
+
+  if (displayActive && (millis() - lastActivityTime > DISPLAY_TIMEOUT)) {
+
+    turnOffDisplay();
+
+    system_update_cpu_freq(80); // Set to low speed when display is off
+
+  }
+
+
   // Read the state of the buttons
+
   int stateButtonState = digitalRead(STATE_BUTTON_PIN);
+
   int sendButtonState = digitalRead(SEND_BUTTON_PIN);
 
+
   // Handle button presses
-  if (stateButtonState == LOW) {
-    if (currentState == 4) {
-      currentState = 5;  // Transition from "call" state to "interacting" state
+
+  if (stateButtonState == LOW || sendButtonState == LOW) {
+
+    wakeUpSystem();
+
+    if (stateButtonState == LOW) {
+
+      if (currentState == 4) {
+
+        currentState = 5;  // Transition from "call" state to "interacting" state
+
+      }
+
+      handleStatePress();
+
     }
-    handleStatePress();
-  }
-  if (sendButtonState == LOW) {
-    if (currentState == 4) {
-      currentState = 5;  // Transition from "call" state to "interacting" state
+
+    if (sendButtonState == LOW) {
+
+      if (currentState == 4) {
+
+        currentState = 5;  // Transition from "call" state to "interacting" state
+
+      }
+
+      handleSendPress();
+
     }
-    handleSendPress();
+
   }
 
-  // Update LEDs based on current state
-  updateLEDs();
 
-  // Render menu
-  renderMenu();
+  if (displayActive) {
+
+    // Update LEDs based on current state
+
+    updateLEDs();
+
+
+    // Render menu
+
+    renderMenu();
+
+  }
+
 
   delay(100); // Small delay to prevent bouncing
+
 }
