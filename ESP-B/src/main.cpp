@@ -44,8 +44,7 @@ const char* menuItems[] = {
 const int numMenuItems = sizeof(menuItems) / sizeof(menuItems[0]);
 
 // ESPNow variables
-uint8_t broadcastAddress[] = {0x98, 0xF4, 0xAB, 0xBC, 0xCE, 0x25};
-
+uint8_t broadcastAddress[] = {0xC4, 0xD8, 0xD5, 0x2B, 0x7C, 0x15};
 unsigned long lastFlashTime = 0;
 const long flashInterval = 500; // 500ms interval for flashing
 
