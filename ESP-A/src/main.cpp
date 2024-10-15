@@ -4,13 +4,8 @@
 // Define the MAC address of ESP-B
 uint8_t broadcastAddress[] = {0x98, 0xF4, 0xAB, 0xBC, 0xCE, 0x25};
 
-// Define a struct to send complex data
-typedef struct {
-  bool wakeUp;
-  int state;
-} MessageData;
-
-MessageData messageData;
+// Define the state
+uint8_t state;
 
 const int CALL_BUTTON_PIN = 2;  // GPIO 2 (D4)
 
@@ -24,31 +19,10 @@ const int LED_Red = 14;  // GPIO 14 (D5)
 const int LED_Yellow = 12;  // GPIO 12 (D6)
 const int LED_Green = 13;  // GPIO 13 (D7)
 
-void onReceive(uint8_t* mac, uint8_t* incomingData, uint8_t len) {
-  // Handle incoming data
-  MessageData incomingMessageData;
-  memcpy(&incomingMessageData, incomingData, len);
 
-  messageData.wakeUp = incomingMessageData.wakeUp;
-  messageData.state = incomingMessageData.state;
-}
 
-void takeAction(int state) {
+void takeAction(uint8_t state) {
   switch (state) {
-    case 0: // Running light while waiting for interaction
-      // Simple running light pattern: 0.7 seconds each at 50% brightness
-      while (true) {
-        analogWrite(LED_Red, 128);
-        delay(700);
-        analogWrite(LED_Red, 0);
-        analogWrite(LED_Yellow, 128);
-        delay(700);
-        analogWrite(LED_Yellow, 0);
-        analogWrite(LED_Green, 128);
-        delay(700);
-        analogWrite(LED_Green, 0);
-      }
-      break;
     case 1: // Solid Red
       digitalWrite(LED_Red, HIGH);
       digitalWrite(LED_Yellow, LOW);
@@ -70,6 +44,18 @@ void takeAction(int state) {
   }
 }
 
+void onReceive(uint8_t* mac, uint8_t* incomingData, uint8_t len) {
+  // Handle incoming data
+  if (len != 1) {
+    Serial.println("Invalid message length");
+    return;
+  }
+
+  state = incomingData[0];
+
+  // Update LEDs based on received state
+  takeAction(state);
+}
 
 void setup() {
   Serial.begin(74880);
@@ -115,27 +101,11 @@ void loop() {
     // Call button is pressed
     digitalWrite(LED_Green, LOW);
     digitalWrite(LED_Yellow, HIGH);
-  } else {
-    // Call button is not pressed
-    digitalWrite(LED_Green, HIGH);
-    digitalWrite(LED_Yellow, LOW);
-  }
 
- if (callButtonState == LOW) {
-
-    messageData.wakeUp = true;
-
-    messageData.state = 0; // Not used in this case
-
-    esp_now_send(broadcastAddress, (uint8_t*) &messageData, sizeof(messageData));
-
-  }
-  
-  // Handle wake-up sequence and LED lighting sequence
-  if (messageData.wakeUp) {
-    takeAction(messageData.state);
+    // Send wake-up message to ESP-B
+    state = 4;
+    esp_now_send(broadcastAddress, &state, 1);
   }
 
   delay(100);
 }
-
