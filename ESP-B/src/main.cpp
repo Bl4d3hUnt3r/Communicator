@@ -38,33 +38,21 @@ const int numMenuItems = sizeof(menuItems) / sizeof(menuItems[0]);
 uint8_t broadcastAddress[] = {0xC4, 0xD8, 0xD5, 0x2B, 0x7C, 0x15};
 
 void turnOffDisplay() {
-
   displayActive = false;
-
   u8g2.setPowerSave(1);
-
   digitalWrite(GREEN_LED_PIN, LOW);
-
   digitalWrite(RED_LED_PIN, LOW);
-
   system_update_cpu_freq(80);
-
-  Serial.println("Display turned off");
-
+  currentState = 0; // Reset the state when turning off the display
+  currentMenuItem = 0; // Reset the menu item as well
+  Serial.println("Display turned off and state reset to idle");
 }
 
 void checkIdleTimeout() {
-
   if (currentState != 0 && millis() - lastActivityTime > IDLE_TIMEOUT) {
-
-    currentState = 0;
-
-    turnOffDisplay();
-
     Serial.println("Idle timeout reached. Returning to idle state.");
-
+    turnOffDisplay();
   }
-
 }
 
 void renderMenu() {
@@ -99,7 +87,17 @@ void turnOnDisplay() {
 
 void wakeUpSystem() {
   lastActivityTime = millis();
-  turnOnDisplay();
+  if (!displayActive) {
+    displayActive = true;
+    u8g2.setPowerSave(0);
+    system_update_cpu_freq(160);
+    if (currentState == 0) {
+      currentState = 5; // Set to menu state if coming from idle
+      currentMenuItem = 1; // Start at the first menu item
+    }
+    renderMenu();
+    Serial.println("System woken up");
+  }
 }
 
 void flashLEDs() {
@@ -137,146 +135,84 @@ void updateLEDs() {
   }
 }
 
-void handleSendPress() {
-
-  if (currentState == 5) {
-
-    wakeUpSystem();
-
-    if (currentMenuItem >= 1 && currentMenuItem <= 3) {
-
-      currentState = currentMenuItem;
-
-      uint8_t stateToSend = (uint8_t)currentState;
-
-      
-
-      Serial.print("Attempting to send state: ");
-
-      Serial.println(stateToSend);
-
-      
-
-      uint8_t result = esp_now_send(broadcastAddress, &stateToSend, sizeof(uint8_t));
-
-      
-
-      if (result == 0) {
-
-        Serial.print("Sent state to A: ");
-
-        Serial.println(currentState);
-
-      } else {
-
-        Serial.println("Failed to send state");
-
-      }
-
-      
-
-      delay(1000);
-
-      currentState = 0;
-
-      renderMenu();
-
-    } else {
-
-      Serial.println("Invalid currentMenuItem value");
-
-    }
-
-  }
-
-}
-
 void handleStatePress() {
-  if (currentState == 4) {
+  lastActivityTime = millis();
+  if (currentState == 0 || currentState == 4) {
     wakeUpSystem();
     currentState = 5;
+    currentMenuItem = 1; // Start at the first menu item
     uint8_t stateToSend = (uint8_t)currentState;
     esp_now_send(broadcastAddress, &stateToSend, sizeof(uint8_t));
     Serial.println("Transitioned to state 5, sent to device A");
-    renderMenu();
   } else if (currentState == 5) {
     currentMenuItem = (currentMenuItem % (numMenuItems - 1)) + 1;
+  }
+  renderMenu();
+}
+
+void handleSendPress() {
+  lastActivityTime = millis();
+  if (currentState == 5 && currentMenuItem >= 1 && currentMenuItem <= 3) {
+    currentState = currentMenuItem;
+    uint8_t stateToSend = (uint8_t)currentState;
+
+    Serial.print("Attempting to send state: ");
+    Serial.println(stateToSend);
+
+    uint8_t result = esp_now_send(broadcastAddress, &stateToSend, sizeof(uint8_t));
+
+    if (result == 0) {
+      Serial.print("Sent state to A: ");
+      Serial.println(currentState);
+    } else {
+      Serial.println("Failed to send state");
+    }
+
+    delay(1000);
     renderMenu();
+  } else {
+    Serial.println("Invalid state or menu item for sending");
   }
 }
 
 void OnDataRecv(uint8_t *mac, uint8_t *incomingData, uint8_t len) {
-
+  lastActivityTime = millis();
   if (len != 1) {
-
     Serial.println("Invalid message length");
-
     return;
-
   }
-
 
   uint8_t receivedState = incomingData[0];
 
-
-  wakeUpSystem();
-
-
   Serial.print("Received message: state = ");
-
   Serial.println(receivedState);
 
-
-  // Handle incoming message
-
-  switch (receivedState) {
-
-    case 4:  // Call state
-
-      if (currentState == 0) {  // Only react if we're in idle state
-
-        currentState = 4;
-
-        Serial.println("Call received. LEDs flashing.");
-
-      }
-
-      break;
-
-    case 1:
-
-    case 2:
-
-    case 3:
-
-      currentState = receivedState;
-
-      Serial.print("State updated to: ");
-
+  if (receivedState == 4 && currentState == 0) {  // Call state and device is idle
+    wakeUpSystem();
+    currentState = 4;
+    currentMenuItem = 0; // Reset menu item
+    Serial.println("Call received. LEDs flashing.");
+  } else if (receivedState >= 1 && receivedState <= 3) {
+    currentState = receivedState;
+    currentMenuItem = receivedState;
+    Serial.print("State updated to: ");
+    Serial.println(currentState);
+  } else if (receivedState == 5) {  // Request for current state
+    if (currentState != 0) {
+      uint8_t stateToSend = (uint8_t)currentState;
+      esp_now_send(broadcastAddress, &stateToSend, sizeof(uint8_t));
+      Serial.print("Sent current state to A: ");
       Serial.println(currentState);
-
-      break;
-
-    default:
-
-      Serial.println("Unexpected state received");
-
-      // Don't update currentState for unexpected values
-
-      break;
-
+    }
+  } else {
+    Serial.println("Unexpected state received");
   }
 
-
   // Update OLED display based on current state
-
   renderMenu();
 
-
   // Update LEDs based on the new state
-
   updateLEDs();
-
 }
 
 void setup() {
@@ -316,47 +252,51 @@ void setup() {
   esp_now_register_recv_cb(OnDataRecv);
   system_update_cpu_freq(80);
   lastActivityTime = millis();
+ 
   Serial.println("Setup complete");
+
+  displayActive = false;
+
+  u8g2.setPowerSave(1);
+
+  currentState = 0;
+
+  currentMenuItem = 0;
+
   turnOffDisplay();
+
 }
 
 void loop() {
-  unsigned long currentTime = millis();
+  if (currentState == 0) {  // Idle state
+    ESP.deepSleep(0);  // Deep sleep until external interrupt (button press or ESP-NOW message)
+  } else {
+    unsigned long currentTime = millis();
 
+    int stateButtonState = digitalRead(STATE_BUTTON_PIN);
+    int sendButtonState = digitalRead(SEND_BUTTON_PIN);
 
-
-  checkIdleTimeout();
-
-
-  if (displayActive && (currentTime - lastActivityTime > DISPLAY_TIMEOUT)) {
-    turnOffDisplay();
-  }
-
-  int stateButtonState = digitalRead(STATE_BUTTON_PIN);
-  int sendButtonState = digitalRead(SEND_BUTTON_PIN);
-
-  if (stateButtonState == LOW || sendButtonState == LOW) {
-    if (millis() - lastButtonPressTime > DEBOUNCE_DELAY) {
-      lastButtonPressTime = millis();
-      if (stateButtonState == LOW) {
-        if (currentState == 4) {
-          currentState = 5;
+    if (stateButtonState == LOW || sendButtonState == LOW) {
+      if (currentTime - lastButtonPressTime > DEBOUNCE_DELAY) {
+        lastButtonPressTime = currentTime;
+        lastActivityTime = currentTime;
+        wakeUpSystem();
+        if (stateButtonState == LOW) {
+          handleStatePress();
         }
-        handleStatePress();
-      }
-      if (sendButtonState == LOW) {
-        if (currentState == 4) {
-          currentState = 5;
+        if (sendButtonState == LOW && currentState == 5) {
+          handleSendPress();
         }
-        handleSendPress();
       }
     }
-  }
 
-  if (displayActive) {
-    updateLEDs();
-    renderMenu();
-  }
+    checkIdleTimeout();
 
-  delay(100);
+    if (displayActive) {
+      updateLEDs();
+      renderMenu();
+    }
+
+    delay(100);
+  }
 }
