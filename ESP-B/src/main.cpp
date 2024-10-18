@@ -46,6 +46,7 @@ unsigned long lastButtonPressTime = 0;
 unsigned long idleStartTime = 0;
 
 bool isPowerSaving = false;
+unsigned long lastPowerSaveCheckTime = 0;
 
 
 // OLED display
@@ -258,59 +259,33 @@ void handleStatePress() {
 
 
 void handleSendPress() {
-
-  Serial.println("Send button pressed");
-
-
   if (currentState == 5 && currentMenuItem >= 1 && currentMenuItem <= 3) {
-
-    uint8_t stateToSend = (uint8_t)currentMenuItem;
-
+    currentState = currentMenuItem;
+    uint8_t stateToSend = (uint8_t)currentState;
 
     Serial.print("Attempting to send state: ");
-
     Serial.println(stateToSend);
-
 
     uint8_t result = esp_now_send(broadcastAddress, &stateToSend, sizeof(uint8_t));
 
-
     if (result == 0) {
-
       Serial.print("Sent state to A: ");
-
-      Serial.println(stateToSend);
-
-
-      // Reset to idle state after sending
-
-      currentState = 0;
-
-      currentMenuItem = 0;
-
-      idleStartTime = millis(); // Reset idle timer
-
-      isPowerSaving = false; // Ensure we're not in power-saving mode
-
-      Serial.println("Reset to idle state (0)");
-
+      Serial.println(currentState);
     } else {
-
       Serial.println("Failed to send state");
-
     }
 
+    delay(1000);
+    renderMenu();
+    
+    // Schedule a reset after the full cycle is complete
+    Serial.println("Scheduling reset after full cycle");
+    delay(100);  // Short delay to ensure serial output is sent
+    ESP.restart();  // Use ESP.restart() for a cleaner reset
   } else {
-
     Serial.println("Invalid state or menu item for sending");
-
   }
-
-
-  renderMenu();
-
 }
-
 
 void OnDataRecv(uint8_t *mac, uint8_t *incomingData, uint8_t len) {
 
@@ -442,7 +417,7 @@ void loop() {
   unsigned long currentTime = millis();
   static unsigned long lastLoopTime = 0;
 
-  if (currentTime - lastLoopTime >= 1000) {
+  if (currentTime - lastLoopTime >= 5000) {
     lastLoopTime = currentTime;
     Serial.println("Loop cycle");
     if (currentState == 0) {
