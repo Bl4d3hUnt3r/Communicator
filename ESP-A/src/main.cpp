@@ -22,6 +22,36 @@ unsigned long lastEffectUpdateTime = 0;
 int currentLED = 0;
 int direction = 1;
 
+#define MAX_RETRIES 3
+
+#define RETRY_DELAY 100 // milliseconds
+void sendWithRetry(uint8_t stateToSend) {
+
+  for (int i = 0; i < MAX_RETRIES; i++) {
+
+    uint8_t result = esp_now_send(broadcastAddress, &stateToSend, 1);
+
+    if (result == 0) {
+
+      Serial.print("Successfully sent state to ESP-B: ");
+
+      Serial.println(stateToSend);
+
+      return;
+
+    }
+
+    Serial.println("Failed to send state, retrying...");
+
+    delay(RETRY_DELAY);
+
+  }
+
+  Serial.println("Failed to send state after maximum retries");
+
+}
+
+
 void updateKnightRiderEffect() {
   if (millis() - lastEffectUpdateTime >= 100) { // Update every 100ms
     digitalWrite(LED_Red, currentLED == 0 ? HIGH : LOW);
@@ -67,11 +97,21 @@ void updateLEDs() {
 }
 
 void setState(uint8_t newState) {
-  state = newState;
-  lastStateChangeTime = millis();
-  Serial.print("State changed to: ");
-  Serial.println(state);
-  esp_now_send(broadcastAddress, &state, 1);
+
+  if (newState != state) {
+
+    state = newState;
+
+    lastStateChangeTime = millis();
+
+    Serial.print("State changed to: ");
+
+    Serial.println(state);
+
+    sendWithRetry(state);
+
+  }
+
 }
 
 void OnDataRecv(uint8_t* mac, uint8_t* incomingData, uint8_t len) {
