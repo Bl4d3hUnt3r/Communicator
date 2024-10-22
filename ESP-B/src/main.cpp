@@ -212,7 +212,7 @@ void handleStatePress() {
 
     currentState = 5;
 
-    currentMenuItem = 1; // Start at the first menu item
+    currentMenuItem = 0; // Start at the first menu item
 
     isInCallState = false;
 
@@ -235,125 +235,67 @@ void handleStatePress() {
 }
 
 void handleSendPress() {
-
   Serial.println("Send button pressed");
-
   updateActivityTime();
-
   
-
   if (currentState == 5 && currentMenuItem >= 1 && currentMenuItem <= 3) {
-
     uint8_t stateToSend = (uint8_t)currentMenuItem;
-
     Serial.print("Attempting to send state: ");
-
     Serial.println(stateToSend);
-
     
-
     for (int i = 0; i < MAX_RETRIES; i++) {
-
       uint8_t result = esp_now_send(broadcastAddress, &stateToSend, sizeof(uint8_t));
-
       if (result == 0) {
-
         Serial.print("Sent state to A: ");
-
         Serial.println(stateToSend);
-
         currentState = stateToSend;  // Update the current state
-
+        isInCallState = false;  // Exit call state
         Serial.print("Updated current state to: ");
-
         Serial.println(currentState);
-
+        idleStartTime = millis();  // Start the timer to return to idle
         break;
-
       } else {
-
         Serial.println("Failed to send state, retrying...");
-
         delay(RETRY_DELAY);
-
       }
-
     }
-
     
-
     if (currentState != stateToSend) {
-
       Serial.println("Failed to send state after maximum retries");
-
     }
-
   } else {
-
     Serial.println("Invalid state or menu item for sending");
-
   }
-
   
-
   renderMenu();
-
 }
 
 void OnDataRecv(uint8_t *mac, uint8_t *incomingData, uint8_t len) {
-
   Serial.println("Data received");
-
   updateActivityTime();
-
   
-
   if (len == 1) {
-
     uint8_t receivedState = incomingData[0];
-
     Serial.print("Received message: state = ");
-
     Serial.println(receivedState);
-
     if (receivedState == 4 && (currentState == 0 || currentState == 5)) {
-
       currentState = 4;
-
-      currentMenuItem = 0; // Reset menu item
-
+      currentMenuItem = 0; // Reset menu item when receiving a new call
       isInCallState = true;
-
       Serial.println("Call received. LEDs flashing.");
-
-    } else if (receivedState >= 1 && receivedState <= 3) {
-
-      currentState = receivedState;
-
-      currentMenuItem = receivedState;
-
-      isInCallState = false;
-
-      Serial.print("State updated to: ");
-
-      Serial.println(currentState);
-
+    } else {
+      Serial.println("Unexpected state received");
     }
-
   }
-
   
-
   updateLEDs();
-
   renderMenu();
-
 }
 
 void setup() {
   Serial.begin(74880);
-  pinMode(STATE_BUTTON_PIN, INPUT);
-  pinMode(SEND_BUTTON_PIN, INPUT);
+  pinMode(STATE_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(SEND_BUTTON_PIN, INPUT_PULLUP);
   pinMode(GREEN_LED_PIN, OUTPUT);
   pinMode(RED_LED_PIN, OUTPUT);
   u8g2.begin();
@@ -408,11 +350,14 @@ void loop() {
     }
   }
 
-  if (!isInCallState && currentState == 0 && currentTime - lastActivityTime > IDLE_TIMEOUT) {
-    enterIdleState();
+  // Check for returning to idle state after sending a status or if in idle state
+  if ((!isInCallState && (currentState >= 1 && currentState <= 3)) || currentState == 0) {
+    if (currentTime - idleStartTime > IDLE_TIMEOUT) {
+      enterIdleState();
+    }
   }
 
-  checkPowerSaving();  // Add this line to check and enter power-saving mode if needed
+  checkPowerSaving();
   updateLEDs();
 
   if (!isPowerSaving) {
