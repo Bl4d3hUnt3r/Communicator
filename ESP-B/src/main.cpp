@@ -15,6 +15,11 @@ uint8_t broadcastAddress[] = {0xC4, 0xD8, 0xD5, 0x2B, 0x7C, 0x15};
 #define GREEN_LED_PIN 5
 #define RED_LED_PIN 4
 
+#define MAX_RETRIES 3
+bool isInCallState = false;
+
+#define RETRY_DELAY 100 // milliseconds
+
 const char* menuItems[] = {"Status", "Jetzt nicht", "Leise durch", "in Ordnung"};
 const int numMenuItems = sizeof(menuItems) / sizeof(menuItems[0]);
 
@@ -38,6 +43,9 @@ const unsigned long IDLE_TIMEOUT = 30000; // 30 seconds timeout for returning to
 unsigned long lastActivityTime = 0;
 
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, OLED_SCL, OLED_SDA);
+
+
+
 
 void renderMenu() {
   u8g2.clearBuffer();
@@ -105,7 +113,7 @@ void updateLEDs() {
 
         ledState = !ledState;
 
-        digitalWrite(RED_LED_PIN, ledState);
+        digitalWrite(RED_LED_PIN, !ledState);
 
         digitalWrite(GREEN_LED_PIN, ledState);
 
@@ -170,17 +178,33 @@ void exitPowerSaveMode() {
 
 }
 
-void checkPowerSaving() {
-  if (currentState == 0 && !isPowerSaving && (currentTime - idleStartTime >= POWER_SAVE_TIMEOUT)) {
-    enterPowerSaveMode();
+void updateActivityTime() {
+  lastActivityTime = millis();
+  idleStartTime = lastActivityTime;  // Update idle start time when there's activity
+  if (isPowerSaving) {
+    exitPowerSaveMode();
   }
+}
+
+void checkPowerSaving() {
+
+  if (!isInCallState && currentState == 0 && !isPowerSaving && idleStartTime > 0) {
+
+    if (millis() - idleStartTime >= POWER_SAVE_TIMEOUT) {
+
+      enterPowerSaveMode();
+
+    }
+
+  }
+
 }
 
 void handleStatePress() {
 
   Serial.println("State button pressed");
 
-  lastActivityTime = millis();
+  updateActivityTime();
 
   
 
@@ -189,6 +213,8 @@ void handleStatePress() {
     currentState = 5;
 
     currentMenuItem = 1; // Start at the first menu item
+
+    isInCallState = false;
 
     Serial.println("Transitioned to state 5, menu interaction started");
 
@@ -212,7 +238,7 @@ void handleSendPress() {
 
   Serial.println("Send button pressed");
 
-  lastActivityTime = millis();
+  updateActivityTime();
 
   
 
@@ -224,23 +250,41 @@ void handleSendPress() {
 
     Serial.println(stateToSend);
 
-    uint8_t result = esp_now_send(broadcastAddress, &stateToSend, sizeof(uint8_t));
+    
 
-    if (result == 0) {
+    for (int i = 0; i < MAX_RETRIES; i++) {
 
-      Serial.print("Sent state to A: ");
+      uint8_t result = esp_now_send(broadcastAddress, &stateToSend, sizeof(uint8_t));
 
-      Serial.println(stateToSend);
+      if (result == 0) {
 
-      currentState = stateToSend;  // Update the current state
+        Serial.print("Sent state to A: ");
 
-      Serial.print("Updated current state to: ");
+        Serial.println(stateToSend);
 
-      Serial.println(currentState);
+        currentState = stateToSend;  // Update the current state
 
-    } else {
+        Serial.print("Updated current state to: ");
 
-      Serial.println("Failed to send state");
+        Serial.println(currentState);
+
+        break;
+
+      } else {
+
+        Serial.println("Failed to send state, retrying...");
+
+        delay(RETRY_DELAY);
+
+      }
+
+    }
+
+    
+
+    if (currentState != stateToSend) {
+
+      Serial.println("Failed to send state after maximum retries");
 
     }
 
@@ -260,15 +304,7 @@ void OnDataRecv(uint8_t *mac, uint8_t *incomingData, uint8_t len) {
 
   Serial.println("Data received");
 
-  lastActivityTime = millis();
-
-  
-
-  if (isPowerSaving) {
-
-    exitPowerSaveMode();
-
-  }
+  updateActivityTime();
 
   
 
@@ -286,6 +322,8 @@ void OnDataRecv(uint8_t *mac, uint8_t *incomingData, uint8_t len) {
 
       currentMenuItem = 0; // Reset menu item
 
+      isInCallState = true;
+
       Serial.println("Call received. LEDs flashing.");
 
     } else if (receivedState >= 1 && receivedState <= 3) {
@@ -293,6 +331,8 @@ void OnDataRecv(uint8_t *mac, uint8_t *incomingData, uint8_t len) {
       currentState = receivedState;
 
       currentMenuItem = receivedState;
+
+      isInCallState = false;
 
       Serial.print("State updated to: ");
 
@@ -335,87 +375,49 @@ void setup() {
 }
 
 void enterIdleState() {
-
-  currentState = 0;
-
-  currentMenuItem = 0;
-
-  updateLEDs();
-
-  enterPowerSaveMode();
-
-  Serial.println("Entered idle state");
-
+  if (currentState != 0) {
+    currentState = 0;
+    currentMenuItem = 0;
+    isInCallState = false;
+    updateLEDs();
+    renderMenu();
+    Serial.println("Entered idle state");
+    idleStartTime = millis();  // Start counting idle time
+  }
 }
 
 
 void loop() {
-
-
-  
+  currentTime = millis();
 
   int stateButtonState = digitalRead(STATE_BUTTON_PIN);
-
   int sendButtonState = digitalRead(SEND_BUTTON_PIN);
 
-  
-
   if (stateButtonState == LOW || sendButtonState == LOW) {
-
     if (currentTime - lastButtonPressTime > DEBOUNCE_DELAY) {
-
       lastButtonPressTime = currentTime;
-
-      lastActivityTime = currentTime; // Reset activity timer
-
-      
-
-      if (isPowerSaving) {
-
-        exitPowerSaveMode();
-
-      }
-
-      
+      updateActivityTime();
 
       if (stateButtonState == LOW) {
-
         handleStatePress();
-
       }
-
-      
 
       if (sendButtonState == LOW && currentState == 5) {
-
         handleSendPress();
-
       }
-
     }
-
   }
 
-  
-
-  if (currentTime - lastActivityTime > IDLE_TIMEOUT && currentState != 0) {
-
+  if (!isInCallState && currentState == 0 && currentTime - lastActivityTime > IDLE_TIMEOUT) {
     enterIdleState();
-
   }
 
-  
-
+  checkPowerSaving();  // Add this line to check and enter power-saving mode if needed
   updateLEDs();
 
   if (!isPowerSaving) {
-
     renderMenu();
-
   }
 
-  
-
   delay(10);
-
 }
